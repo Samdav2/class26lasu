@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#11203F" />
+      <stop offset="100%" stop-color="#1D4E89" />
+    </linearGradient>
+  </defs>
+  <rect width="640" height="480" fill="url(#grad2)" />
+  <g transform="translate(320 240)">
+    <rect x="-120" y="-80" width="240" height="160" rx="24" fill="#fff" opacity="0.12" />
+    <rect x="-80" y="-60" width="160" height="100" rx="16" fill="#fff" opacity="0.18" />
+    <path d="M-90 30 H90 L75 90 H-75 Z" fill="#D4AF37" />
+    <text x="0" y="170" text-anchor="middle" fill="#fff" font-family="Inter, sans-serif" font-size="48" font-weight="800">FACULTY</text>
+  </g>
+</svg>

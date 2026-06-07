@@ -39,12 +39,27 @@ interface Comment {
 
 const FACULTIES = ['All', 'Science', 'Arts', 'Engineering', 'Law', 'Medicine', 'Education', 'Management', 'Social Sciences'];
 
+const IMAGE_EXTENSIONS = new Set(['png','jpg','jpeg','gif','webp','avif','bmp','tiff','svg','jfif','heic','heif']);
+const VIDEO_EXTENSIONS = new Set(['mp4','mov','webm','ogg','m4v','avi','mkv','flv','3gp','wmv','ts']);
+
+function getFileExtension(filename: string) {
+  return filename.split('.').pop()?.toLowerCase() || '';
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith('image/') || IMAGE_EXTENSIONS.has(getFileExtension(file.name));
+}
+
+function isVideoFile(file: File) {
+  return file.type.startsWith('video/') || VIDEO_EXTENSIONS.has(getFileExtension(file.name));
+}
+
 // Components
 function FileThumbnail({ file, onRemove }: { file: any, onRemove: () => void }) {
   const [preview, setPreview] = useState<string | null>(null);
 
   useEffect(() => {
-    if (file.type.startsWith('image/')) {
+    if (isImageFile(file)) {
       const url = URL.createObjectURL(file);
       setPreview(url);
       return () => URL.revokeObjectURL(url);
@@ -61,19 +76,19 @@ function FileThumbnail({ file, onRemove }: { file: any, onRemove: () => void }) 
         <X size={10} />
       </button>
       
-      {file.type.startsWith('image/') && preview ? (
+      {isImageFile(file) && preview ? (
         <img src={preview} className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center space-y-2 bg-[#0A0A0A]">
           <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10 group-hover/file:bg-[#D4AF37]/20 group-hover/file:border-[#D4AF37]/50 transition-colors">
-            {file.type.startsWith('video/') ? (
+            {isVideoFile(file) ? (
               <Play className="text-[#D4AF37]" size={20} fill="#D4AF37" />
             ) : (
               <Upload className="text-white/20" size={20} />
             )}
           </div>
           <span className="text-[8px] text-white/30 uppercase tracking-[0.2em] px-2 truncate w-full text-center">
-            {file.type.startsWith('video/') ? 'Video' : 'File'}
+            {isVideoFile(file) ? 'Video' : 'File'}
           </span>
         </div>
       )}
@@ -92,7 +107,7 @@ function ProgressiveImage({ src, thumbnail, alt, className, imgClassName }: { sr
   const [hasError, setHasError] = useState(false);
 
   return (
-    <div className={cn("relative overflow-hidden bg-[#0A0A0A]", className)}>
+    <div className={cn("relative overflow-hidden bg-[#0A0A0A] w-full h-full", className)}>
       {/* Thumbnail or Blur Placeholder */}
       {thumbnail && !isLoaded && !hasError && (
         <img 
@@ -128,7 +143,6 @@ function ProgressiveImage({ src, thumbnail, alt, className, imgClassName }: { sr
           isLoaded ? "opacity-100 blur-0 scale-100" : "opacity-0 scale-105",
           imgClassName
         )}
-        referrerPolicy="no-referrer"
       />
     </div>
   );
@@ -222,11 +236,13 @@ export default function Archive() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [selectedMemoryForComments, setSelectedMemoryForComments] = useState<Memory | null>(null);
+  const [selectedImageForView, setSelectedImageForView] = useState<Memory | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [processingLikes, setProcessingLikes] = useState<Set<string>>(new Set());
   const [processingDeletions, setProcessingDeletions] = useState<Set<string>>(new Set());
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -241,6 +257,7 @@ export default function Archive() {
 
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [hasError, setHasError] = useState(false);
   const [lastDoc, setLastDoc] = useState<any>(null);
   const MEMORIES_PER_PAGE = 12;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -257,7 +274,7 @@ export default function Archive() {
 
     selectedFiles.forEach((file: File) => {
       // Validation: Type (Allow all images and videos)
-      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      if (!isImageFile(file) && !isVideoFile(file)) {
         error = "Some files are of unsupported type. Please upload images or videos.";
         return;
       }
@@ -285,8 +302,6 @@ export default function Archive() {
 
   const formatRawMemories = useCallback((rawData: any[]): Memory[] => {
     return rawData.map((m: any) => {
-      console.log(`[Archive] Loading memory ID: ${m.id}`);
-      
       let parsedTags: string[] = [];
       if (Array.isArray(m.tags)) {
         parsedTags = m.tags.map((t: any) => String(t).trim()).filter(Boolean);
@@ -306,12 +321,12 @@ export default function Archive() {
         id: m.id.toString(),
         url: m.media_url,
         thumbnailUrl: m.thumbnail_url,
-        type: m.media_type,
+        type: m.media_type?.toLowerCase() === 'video' ? 'video' : 'image',
         caption: m.description || '',
         authorName: m.uploader_name || 'Anonymous',
         faculty: m.faculty || 'General',
-        likesCount: m.likes_count,
-        commentsCount: m.comments_count,
+        likesCount: m.likes_count || 0,
+        commentsCount: m.comments_count || 0,
         tags: parsedTags,
         taggedPeople: parsedPeople,
         approved: m.approved,
@@ -351,14 +366,13 @@ export default function Archive() {
 
   const fetchMemoriesWithFallback = useCallback(async () => {
     setIsLoading(true);
+    setHasError(false);
     if (isConnected) {
-      console.log("[Archive] Fetching memories directly via WebSocket connection...");
       sendMessage({
         type: 'FETCH_MEMORIES_REQUEST',
         faculty: filter !== 'All' ? filter : undefined
       });
     } else {
-      console.log("[Archive] WebSocket is not established. Using API fallback...");
       try {
         const data = await memoryService.getMemories({
           faculty: filter !== 'All' ? filter : undefined,
@@ -368,8 +382,9 @@ export default function Archive() {
         const rawData = Array.isArray(data) ? data : [];
         handleFetchedMemories(rawData);
       } catch (err) {
-        console.error("Fallback load error:", err);
-        setActiveNotification({ type: 'error', message: "Failed to load archive feed." });
+        console.error("Memory load error:", err);
+        setHasError(true);
+        setActiveNotification({ type: 'error', message: "Failed to load archive feed. Please try refreshing the page." });
       } finally {
         setIsLoading(false);
       }
@@ -384,6 +399,7 @@ export default function Archive() {
   const loadMemories = async (isInitial = false) => {
     if ((!isInitial && !hasMore) || isLoadingMore) return;
     
+    setHasError(false);
     if (isInitial) {
       setIsLoading(true);
       setMemories([]);
@@ -423,6 +439,7 @@ export default function Archive() {
       }
     } catch (error) {
       console.error("Load memories error:", error);
+      setHasError(true);
       setActiveNotification({ type: 'error', message: "Failed to load archive feed." });
     } finally {
       setIsLoading(false);
@@ -442,7 +459,7 @@ export default function Archive() {
     const observer = new IntersectionObserver(
       (entries) => {
         const first = entries[0];
-        if (first.isIntersecting && hasMore && !isLoading && !isLoadingMore && !search) {
+        if (first.isIntersecting && hasMore && !isLoading && !isLoadingMore && !search && !hasError) {
           console.log("[Archive] Sentinel intersected - triggering lazy load of memories");
           loadMemoriesRef.current();
         }
@@ -458,7 +475,7 @@ export default function Archive() {
         observer.unobserve(currentSentinel);
       }
     };
-  }, [hasMore, isLoading, isLoadingMore, search]);
+  }, [hasMore, isLoading, isLoadingMore, search, hasError]);
 
   // Real-time listener for metadata (likes/comments) only
   // This is better than fetching full objects real-time for optimization
@@ -616,11 +633,11 @@ export default function Archive() {
         let currentFile = file;
         let thumbnail: File | null = null;
 
-        if (currentFile.type.startsWith('image/')) {
+        if (isImageFile(currentFile)) {
           const { optimized, thumbnail: thumb } = await optimizeImage(currentFile);
           currentFile = optimized;
           thumbnail = thumb;
-        } else if (currentFile.type.startsWith('video/')) {
+        } else if (isVideoFile(currentFile)) {
           thumbnail = await generateVideoThumbnail(currentFile);
         }
         
@@ -701,6 +718,47 @@ export default function Archive() {
       console.error("Like error", error); 
     }
     finally { setProcessingLikes(prev => { const next = new Set(prev); next.delete(memoryId); return next; }); }
+  };
+
+  const handleDownload = async (memory: Memory) => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const link = document.createElement('a');
+      link.href = memory.url;
+      const fileExtension = memory.type === 'video' 
+        ? (memory.url.includes('.mp4') ? '.mp4' : memory.url.includes('.webm') ? '.webm' : memory.url.includes('.mov') ? '.mov' : '.mp4')
+        : (memory.url.includes('.png') ? '.png' : memory.url.includes('.gif') ? '.gif' : memory.url.includes('.webp') ? '.webp' : memory.url.includes('.jpeg') ? '.jpeg' : '.jpg');
+      link.download = `${memory.caption || 'memory'}-${memory.id}${fileExtension}`;
+      link.referrerPolicy = 'no-referrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      const mediaType = memory.type === 'video' ? 'video' : 'image';
+      setActiveNotification({ type: 'success', message: `${mediaType} downloaded successfully!` });
+    } catch (error) {
+      console.error("Download error", error);
+      const mediaType = memory.type === 'video' ? 'video' : 'image';
+      setActiveNotification({ type: 'error', message: `Failed to download ${mediaType}.` });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handlePreviousImage = () => {
+    if (!selectedImageForView) return;
+    const currentIndex = filteredMemories.findIndex(m => m.id === selectedImageForView.id);
+    if (currentIndex > 0) {
+      setSelectedImageForView(filteredMemories[currentIndex - 1]);
+    }
+  };
+
+  const handleNextImage = () => {
+    if (!selectedImageForView) return;
+    const currentIndex = filteredMemories.findIndex(m => m.id === selectedImageForView.id);
+    if (currentIndex < filteredMemories.length - 1) {
+      setSelectedImageForView(filteredMemories[currentIndex + 1]);
+    }
   };
 
   const handleRequestDeletion = (memory: Memory) => {
@@ -788,7 +846,7 @@ export default function Archive() {
     setIsSubmittingComment(true);
     try {
       await memoryService.addComment(selectedMemoryForComments.id, newComment.trim());
-      setMemories(prev => prev.map(m => m.id === selectedMemoryForComments.id ? { ...m, commentsCount: m.comments_count + 1 } : m));
+      setMemories(prev => prev.map(m => m.id === selectedMemoryForComments.id ? { ...m, commentsCount: m.commentsCount + 1 } : m));
       setNewComment('');
       setActiveNotification({ type: 'success', message: "Message added to the legacy." });
     } catch (error) {
@@ -1044,7 +1102,8 @@ export default function Archive() {
                   animate="show"
                   exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
                   key={`memory-grid-${memory.id || index}-${index}`}
-                  className="group relative aspect-square bg-[#0A0A0A] overflow-hidden border border-white/5"
+                  className="group relative aspect-square bg-[#0A0A0A] overflow-hidden border border-white/5 cursor-pointer"
+                  onClick={() => setSelectedImageForView(memory)}
                 >
                 {memory.type === 'image' ? (
                   <ProgressiveImage 
@@ -1055,8 +1114,27 @@ export default function Archive() {
                     imgClassName="opacity-80 group-hover:opacity-100 group-hover:scale-110"
                   />
                 ) : (
-                  <div className="w-full h-full bg-white/5 flex items-center justify-center">
-                    <span className="text-[10px] text-white/30 uppercase tracking-widest">Video Content</span>
+                  <div className="relative w-full h-full bg-[#0A0A0A] overflow-hidden">
+                    {memory.thumbnailUrl ? (
+                      <img
+                        src={memory.thumbnailUrl}
+                        alt={memory.caption}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <video
+                        src={memory.url}
+                        className="w-full h-full object-cover"
+                        muted
+                        playsInline
+                        autoPlay
+                        loop
+                        preload="metadata"
+                      />
+                    )}
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                      <Play size={32} className="text-[#D4AF37]" />
+                    </div>
                   </div>
                 )}
                 
@@ -1344,7 +1422,7 @@ export default function Archive() {
                   <input 
                     type="file" 
                     multiple
-                    accept="image/*,video/*"
+                    accept="image/*,video/*,.png,.jpg,.jpeg,.gif,.webp,.avif,.bmp,.tiff,.svg,.heic,.heif,.mp4,.mov,.webm,.ogg,.m4v,.avi,.mkv,.flv,.3gp,.wmv,.ts"
                     onChange={handleFileChange}
                     className="absolute inset-0 opacity-0 cursor-pointer z-10"
                   />
@@ -1654,6 +1732,136 @@ export default function Archive() {
         )}
       </AnimatePresence>
 
+      {/* Image Lightbox Modal */}
+      <AnimatePresence>
+        {selectedImageForView && (
+          <div className="fixed inset-0 z-[115] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedImageForView(null)}
+              className="absolute inset-0 bg-black/95 backdrop-blur-sm" 
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="group relative w-full max-w-4xl max-h-[90vh] flex flex-col"
+            >
+              {/* Close Button */}
+              <button 
+                onClick={() => setSelectedImageForView(null)}
+                className="absolute top-4 right-4 z-10 text-white/60 hover:text-white transition-colors"
+              >
+                <X size={32} />
+              </button>
+
+              {/* Navigation Buttons */}
+              <button
+                onClick={handlePreviousImage}
+                disabled={filteredMemories.indexOf(selectedImageForView) === 0}
+                className="absolute left-4 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white disabled:opacity-30 transition-all"
+              >
+                <ChevronDown size={32} className="rotate-90" />
+              </button>
+              <button
+                onClick={handleNextImage}
+                disabled={filteredMemories.indexOf(selectedImageForView) === filteredMemories.length - 1}
+                className="absolute right-4 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white disabled:opacity-30 transition-all"
+              >
+                <ChevronDown size={32} className="-rotate-90" />
+              </button>
+
+              <div className="absolute top-20 right-4 z-20 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-200">
+                <div className="rounded-3xl bg-black/70 border border-white/10 p-2 flex items-center gap-2 shadow-2xl backdrop-blur-xl">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    disabled={processingLikes.has(selectedImageForView.id)}
+                    onClick={() => handleLike(selectedImageForView.id)}
+                    className="flex items-center gap-1 rounded-full px-3 py-2 text-white/70 hover:text-[#D4AF37] transition-colors disabled:opacity-50"
+                  >
+                    {processingLikes.has(selectedImageForView.id) ? (
+                      <Loader2 size={16} className="animate-spin text-[#D4AF37]" />
+                    ) : (
+                      <Heart size={16} />
+                    )}
+                    <span className="text-[11px] font-semibold">{selectedImageForView.likesCount}</span>
+                  </motion.button>
+
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setSelectedMemoryForComments(selectedImageForView)}
+                    className="flex items-center gap-1 rounded-full px-3 py-2 text-white/70 hover:text-[#D4AF37] transition-colors"
+                  >
+                    <MessageCircle size={16} />
+                    <span className="text-[11px] font-semibold">{selectedImageForView.commentsCount}</span>
+                  </motion.button>
+
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => handleShare(selectedImageForView)}
+                    className="rounded-full p-2 text-white/70 hover:text-[#D4AF37] transition-colors"
+                    title="Share"
+                  >
+                    <Share2 size={18} />
+                  </motion.button>
+
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    disabled={isDownloading}
+                    onClick={() => handleDownload(selectedImageForView)}
+                    className="rounded-full p-2 text-white/70 hover:text-[#D4AF37] transition-colors disabled:opacity-50"
+                    title="Download"
+                  >
+                    {isDownloading ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <Upload size={18} />
+                    )}
+                  </motion.button>
+                </div>
+              </div>
+
+              {/* Media Display */}
+              <div className="flex-1 min-h-[60vh] bg-black/90 flex items-center justify-center overflow-hidden">
+                {selectedImageForView.type === 'image' ? (
+                  <img 
+                    src={selectedImageForView.url} 
+                    alt={selectedImageForView.caption}
+                    className="max-w-full max-h-[80vh] object-contain"
+                  />
+                ) : (
+                  <video 
+                    src={selectedImageForView.url}
+                    className="max-w-full max-h-[80vh] object-contain"
+                    controls
+                    autoPlay
+                  />
+                )}
+              </div>
+
+              <div className="px-6 py-4 border-t border-white/10 bg-black/10 text-white/80">
+                <p className="text-sm font-medium mb-2">{selectedImageForView.caption}</p>
+                <div className="flex flex-wrap gap-2 text-[10px] text-white/40 uppercase tracking-widest">
+                  <span>By {selectedImageForView.authorName}</span>
+                  <span>•</span>
+                  <span>{selectedImageForView.faculty}</span>
+                  <span>•</span>
+                  <span>{filteredMemories.indexOf(selectedImageForView) + 1} / {filteredMemories.length}</span>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Deletion Request Modal */}
       <AnimatePresence>
         {requestDeletionMemory && (
@@ -1708,151 +1916,152 @@ export default function Archive() {
         )}
       </AnimatePresence>
 
-      {/* Global Notifications */}
+      {/* Auth Modal */}
       <AnimatePresence>
-        {/* Auth Modal */}
-        <AnimatePresence>
-          {authMode && (
-            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+        {authMode && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSearchParams(new URLSearchParams())}
+              className="absolute inset-0 bg-[#050505]/95 backdrop-blur-xl" 
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-[#0A0A0A] border border-white/10 p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <button 
                 onClick={() => setSearchParams(new URLSearchParams())}
-                className="absolute inset-0 bg-[#050505]/95 backdrop-blur-xl" 
-              />
-              
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                className="relative w-full max-w-md bg-[#0A0A0A] border border-white/10 p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+                className="absolute top-4 right-4 text-white/40 hover:text-white"
               >
-                <button 
-                  onClick={() => setSearchParams(new URLSearchParams())}
-                  className="absolute top-4 right-4 text-white/40 hover:text-white"
-                >
-                  <X size={24} />
-                </button>
+                <X size={24} />
+              </button>
 
-                <div className="text-center mb-8">
-                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">
-                    {authMode === 'login' ? 'Welcome Back' : 'Join the Class'}
-                  </h2>
-                  <p className="text-[10px] text-white/30 uppercase tracking-widest">Identify yourself to access the archive</p>
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-black text-white uppercase tracking-tighter mb-2">
+                  {authMode === 'login' ? 'Welcome Back' : 'Join the Class'}
+                </h2>
+                <p className="text-[10px] text-white/30 uppercase tracking-widest">Identify yourself to access the archive</p>
+              </div>
+              
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                {authMode === 'register' && (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Full Name</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={authFormData.full_name}
+                        onChange={(e) => setAuthFormData({...authFormData, full_name: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
+                        placeholder="e.g. Ibrahim Kosai" 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Username</label>
+                      <input 
+                        type="text" 
+                        required
+                        value={authFormData.username}
+                        onChange={(e) => setAuthFormData({...authFormData, username: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
+                        placeholder="e.g. ibrahim26" 
+                      />
+                    </div>
+                  </>
+                )}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Email Address</label>
+                  <input 
+                    type="email" 
+                    required
+                    value={authFormData.email}
+                    onChange={(e) => setAuthFormData({...authFormData, email: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
+                    placeholder="email@example.com" 
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Password</label>
+                  <input 
+                    type="password" 
+                    required
+                    value={authFormData.password}
+                    onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
+                    placeholder="••••••••" 
+                  />
                 </div>
                 
-                <form onSubmit={handleAuthSubmit} className="space-y-4">
-                  {authMode === 'register' && (
+                {authError && (
+                  <p className="text-red-500 text-[10px] uppercase tracking-widest font-bold text-center">{authError}</p>
+                )}
+
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full bg-[#D4AF37] text-black py-4 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center space-x-2 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 mt-6"
+                >
+                  {isAuthLoading ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
                     <>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Full Name</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={authFormData.full_name}
-                          onChange={(e) => setAuthFormData({...authFormData, full_name: e.target.value})}
-                          className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
-                          placeholder="e.g. Ibrahim Kosai" 
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Username</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={authFormData.username}
-                          onChange={(e) => setAuthFormData({...authFormData, username: e.target.value})}
-                          className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
-                          placeholder="e.g. ibrahim26" 
-                        />
-                      </div>
+                      <LogIn size={14} />
+                      <span>{authMode === 'login' ? 'Authenticate' : 'Complete Registration'}</span>
                     </>
                   )}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Email Address</label>
-                    <input 
-                      type="email" 
-                      required
-                      value={authFormData.email}
-                      onChange={(e) => setAuthFormData({...authFormData, email: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
-                      placeholder="email@example.com" 
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-[0.3em] block text-left">Password</label>
-                    <input 
-                      type="password" 
-                      required
-                      value={authFormData.password}
-                      onChange={(e) => setAuthFormData({...authFormData, password: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 p-3 text-sm focus:outline-none focus:border-[#D4AF37]/50 text-white" 
-                      placeholder="••••••••" 
-                    />
-                  </div>
-                  
-                  {authError && (
-                    <p className="text-red-500 text-[10px] uppercase tracking-widest font-bold text-center">{authError}</p>
-                  )}
+                </button>
+              </form>
 
-                  <button 
-                    type="submit"
-                    disabled={isAuthLoading}
-                    className="w-full bg-[#D4AF37] text-black py-4 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center space-x-2 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 mt-6"
-                  >
-                    {isAuthLoading ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <>
-                        <LogIn size={14} />
-                        <span>{authMode === 'login' ? 'Authenticate' : 'Complete Registration'}</span>
-                      </>
-                    )}
-                  </button>
-                </form>
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <button
+                  onClick={async () => {
+                    try {
+                      const { url } = await authService.getGoogleAuthUrl();
+                      window.location.href = url;
+                    } catch (err) {
+                      console.error('Failed to get Google Auth URL', err);
+                    }
+                  }}
+                  type="button"
+                  className="w-full bg-white text-black py-4 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center space-x-2 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                  <span>{authMode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
+                </button>
+              </div>
 
-                <div className="mt-4 pt-4 border-t border-white/10">
-                  <button
-                    onClick={async () => {
-                      try {
-                        const { url } = await authService.getGoogleAuthUrl();
-                        window.location.href = url;
-                      } catch (err) {
-                        console.error('Failed to get Google Auth URL', err);
-                      }
-                    }}
-                    type="button"
-                    className="w-full bg-white text-black py-4 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center space-x-2 hover:scale-[1.02] active:scale-[0.98] transition-all"
-                  >
-                    <svg viewBox="0 0 24 24" width="14" height="14" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                    </svg>
-                    <span>{authMode === 'login' ? 'Sign in with Google' : 'Sign up with Google'}</span>
-                  </button>
-                </div>
+              <div className="mt-8 pt-8 border-t border-white/10 text-center">
+                 <p className="text-[10px] text-white/30 uppercase tracking-widest mb-4">
+                   {authMode === 'login' ? "Don't have an identity yet?" : "Already part of the class?"}
+                 </p>
+                 <button 
+                  onClick={() => setSearchParams({ auth: authMode === 'login' ? 'register' : 'login' })}
+                  className="text-[#D4AF37] text-[10px] uppercase tracking-widest font-black hover:underline"
+                 >
+                   {authMode === 'login' ? 'Request Access' : 'Authenticate Identity'}
+                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-                <div className="mt-8 pt-8 border-t border-white/10 text-center">
-                   <p className="text-[10px] text-white/30 uppercase tracking-widest mb-4">
-                     {authMode === 'login' ? "Don't have an identity yet?" : "Already part of the class?"}
-                   </p>
-                   <button 
-                    onClick={() => setSearchParams({ auth: authMode === 'login' ? 'register' : 'login' })}
-                    className="text-[#D4AF37] text-[10px] uppercase tracking-widest font-black hover:underline"
-                   >
-                     {authMode === 'login' ? 'Request Access' : 'Authenticate Identity'}
-                   </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
+      {/* Global Notifications */}
+      <AnimatePresence>
         {activeNotification && (
           <motion.div
+            key="global-notification-toast"
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}

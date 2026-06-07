@@ -58,6 +58,8 @@ class Memory(Base):
     category_id = Column(Integer, ForeignKey("categories.id"))
     faculty = Column(String, index=True)
     tags = Column(String) # Comma separated
+    people = Column(String) # Comma separated tagged people
+    uploader_name = Column(String, default="Anonymous")
     views = Column(Integer, default=0)
     likes_count = Column(Integer, default=0)
     comments_count = Column(Integer, default=0)

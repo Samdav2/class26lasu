@@ -258,12 +258,17 @@ export default function Admin() {
       const height = 650;
       const left = window.screenX + (window.outerWidth - width) / 2;
       const top = window.screenY + (window.outerHeight - height) / 2;
-      
-      window.open(
-        data.url, 
-        'google_oauth_popup', 
+
+      const popup = window.open(
+        data.url,
+        'google_oauth_popup',
         `scrollbar=yes,status=yes,width=${width},height=${height},left=${left},top=${top}`
       );
+
+      if (!popup) {
+        // If the popup is blocked, fallback to a full-page redirect.
+        window.location.href = data.url;
+      }
     } catch (err: any) {
       console.error(err);
       setErrorNotification(err.message || "Failed to launch OAuth authorization sequence.");

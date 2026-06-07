@@ -2,8 +2,19 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://class26lasu.onrender.com/api/v1';
 
+// Public client — no auth headers, used for endpoints that should work for everyone
+const publicClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Authenticated client — attaches JWT token
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -17,6 +28,21 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Response interceptor: if a 401 is returned, clear stale token and retry once without auth
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      localStorage.removeItem('auth_token');
+      delete originalRequest.headers.Authorization;
+      return axios(originalRequest);
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const authService = {
   async login(credentials: any) {
@@ -39,7 +65,8 @@ export const authService = {
 
 export const memoryService = {
   async getMemories(params?: { faculty?: string; limit?: number; skip?: number }) {
-    const response = await apiClient.get('/memories', { params });
+    // Public endpoint — no auth required, use public client so stale tokens can't break viewing
+    const response = await publicClient.get('/memories', { params });
     return response.data;
   },
 
@@ -54,22 +81,26 @@ export const memoryService = {
   },
 
   async getMemoryById(id: string) {
-    const response = await apiClient.get(`/memories/${id}`);
+    // Public endpoint — viewable without auth
+    const response = await publicClient.get(`/memories/${id}`);
     return response.data;
   },
 
   async getComments(id: string) {
-    const response = await apiClient.get(`/memories/${id}/comments`);
+    // Public endpoint — comments viewable without auth
+    const response = await publicClient.get(`/memories/${id}/comments`);
     return response.data;
   },
 
   async getStats() {
-    const response = await apiClient.get('/stats');
+    // Public endpoint
+    const response = await publicClient.get('/stats');
     return response.data;
   },
 
   async likeMemory(id: string) {
-    const response = await apiClient.post(`/memories/${id}/like`);
+    // Allow anonymous likes — use public client
+    const response = await publicClient.post(`/memories/${id}/like`);
     return response.data;
   },
 

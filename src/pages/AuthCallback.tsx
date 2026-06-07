@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { authService } from '../lib/api-client';
 
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
@@ -12,10 +13,26 @@ export default function AuthCallback() {
     const handleAuth = async () => {
       if (token) {
         localStorage.setItem('auth_token', token);
-        await checkAuth(); // Fetch user profile and update store
-        navigate('/admin'); // Redirect to admin or home depending on role
+
+        try {
+          const user = await authService.getProfile();
+
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(
+              { type: 'OAUTH_AUTH_SUCCESS', token, user },
+              window.location.origin
+            );
+            window.close();
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to fetch profile after OAuth callback', err);
+        }
+
+        await checkAuth();
+        navigate('/admin');
       } else {
-        console.error("No token found in callback URL");
+        console.error('No token found in callback URL');
         navigate('/');
       }
     };
